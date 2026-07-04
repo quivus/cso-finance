@@ -1,6 +1,6 @@
 # CSO Finance
 
-CSO Finance is a mobile-first fund management application built for the Computer Studies Organization (CSO), a student organization. It provides a streamlined interface for treasurers and auditors to track incoming funds, manage budget allocations, log expenses, and generate professional financial summaries.
+CSO Finance is a dedicated fund management tool for the Computer Studies Organization. Built for mobile, it simplifies the way treasurers and auditors oversee budgets, record daily expenses, and produce automated financial summaries.
 
 ## Overview
 
@@ -72,7 +72,7 @@ cso_finance/
 ### Installation
 
 ```bash
-git clone https://github.com/<your-username>/cso-finance.git
+git clone https://github.com/quivus/cso-finance.git
 cd cso-finance
 flutter pub get
 ```
@@ -90,11 +90,3 @@ flutter build apk      # Android
 flutter build ios      # iOS
 flutter build web      # Web
 ```
-
-## License
-
-This project is provided for personal and portfolio purposes. Update this section if a specific license applies.
-
-## Contact
-
-For inquiries, please reach out through the contact details listed on the portfolio site.
