@@ -550,5 +550,5 @@ String formatDateTime(DateTime dt) {
   final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
   final minute = dt.minute.toString().padLeft(2, '0');
   final period = dt.hour >= 12 ? 'PM' : 'AM';
-  return '${months[dt.month - 1]} ${dt.day}, ${dt.year} · $hour12:$minute $period';
+  return '${months[dt.month - 1]} ${dt.day}, ${dt.year} - $hour12:$minute $period';
 }

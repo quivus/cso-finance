@@ -1,7 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../auditing/audit_form.dart';
 import '../services/finance_store.dart';
+import '../services/history_pdf_export.dart';
+import '../widgets/photo_upload_field.dart';
+import '../widgets/currency_input_formatter.dart';
 import 'login.dart';
 import 'printed_view.dart';
 
@@ -73,7 +78,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _addFunds(String source, double amount, {String? notes}) {
+  void _addFunds(
+    String source,
+    double amount, {
+    String? notes,
+    required String photoPath,
+  }) {
     setState(() {
       totalFunds += amount;
       _history.insert(0, {
@@ -81,6 +91,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'desc': source,
         'amount': amount,
         'time': DateTime.now(),
+        'photoPath': photoPath,
         if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
       });
       _allocations.forEach((key, val) {
@@ -90,7 +101,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _persist();
   }
 
-  void _addExpense(String category, String product, double amount) {
+  void _addExpense(
+    String category,
+    String product,
+    double amount,
+    String photoPath,
+  ) {
     setState(() {
       _allocations[category]!['remaining'] -= amount;
       totalFunds -= amount;
@@ -100,6 +116,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'desc': product,
         'amount': amount,
         'time': DateTime.now(),
+        'photoPath': photoPath,
       });
     });
     _persist();
@@ -253,7 +270,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         MaterialPageRoute(
                           builder: (_) => PrintedViewScreen(
                             totalFunds: totalFunds,
-                            allocations: _allocations,
                             officerRole: widget.officerRole,
                             history: _history,
                           ),
@@ -441,7 +457,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _heroIconButton(
                     context,
                     icon: Icons.history_rounded,
-                    onTap: () => _showFundingHistory(context),
+                    onTap: () => _showAllHistory(context),
                     color: palette.textSecondary,
                     showBackground: false,
                   ),
@@ -484,7 +500,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: AppCard(
-          onTap: () => _showCategoryHistory(context, key),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -527,111 +542,244 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  InputDecoration _dialogDecoration(
+    BuildContext context, {
+    required bool hasError,
+    String? hintText,
+    Widget? prefixIcon,
+    String? prefixText,
+  }) {
+    final palette = context.colors;
+    final borderColor = hasError ? palette.danger : palette.divider;
+    final focusColor = hasError ? palette.danger : palette.primary;
+    final prefixColor = Theme.of(context).brightness == Brightness.dark
+        ? palette.textPrimary
+        : palette.primary;
+    return InputDecoration(
+      hintText: hintText,
+      prefixIcon: prefixIcon,
+      prefix: prefixText == null
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Text(
+                prefixText,
+                style: TextStyle(
+                  color: prefixColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                  height: 1,
+                ),
+              ),
+            ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: borderColor, width: hasError ? 1.8 : 1.2),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: focusColor, width: 1.8),
+      ),
+    );
+  }
+
   void _showAddFundsDialog(BuildContext context) {
     final palette = context.colors;
     final desc = TextEditingController();
     final amt = TextEditingController();
     final notes = TextEditingController();
+    String? photoPath;
+    bool descError = false;
+    String descErrorText = 'Enter a funding source';
+    bool amountError = false;
+    String amountErrorText = 'Enter a valid amount';
+    bool photoError = false;
+
     showDialog(
       context: context,
-      builder: (dialogContext) => appThemeScope(
-        palette,
-        AlertDialog(
-          title: const Text('Funding Source'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SectionLabel(
-                  'Source',
-                  padding: EdgeInsets.only(bottom: 8, left: 4),
-                ),
-                TextField(
-                  controller: desc,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w500,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => appThemeScope(
+          palette,
+          AlertDialog(
+            title: const Text('Funding Source'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SectionLabel(
+                    'Source',
+                    padding: EdgeInsets.only(bottom: 8, left: 4),
                   ),
-                  decoration: InputDecoration(
-                    hintText: 'e.g. CS/IT ₱10',
-                    prefixIcon: Icon(
-                      Icons.account_balance_wallet_rounded,
-                      color: palette.accentCyan,
+                  TextField(
+                    controller: desc,
+                    onChanged: (_) {
+                      if (descError) setDialogState(() => descError = false);
+                    },
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: _dialogDecoration(
+                      dialogContext,
+                      hasError: descError,
+                      hintText: 'e.g. CS/IT ₱10',
+                      prefixIcon: Icon(
+                        Icons.account_balance_wallet_rounded,
+                        color: palette.accentCyan,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 20),
-                const SectionLabel(
-                  'Amount',
-                  padding: EdgeInsets.only(bottom: 8, left: 4),
-                ),
-                TextField(
-                  controller: amt,
-                  keyboardType: TextInputType.number,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w500,
+                  if (descError) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      descErrorText,
+                      style: TextStyle(
+                        color: palette.danger,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  const SectionLabel(
+                    'Amount',
+                    padding: EdgeInsets.only(bottom: 8, left: 4),
                   ),
-                  decoration: const InputDecoration(
-                    hintText: '0.00',
-                    prefixText: '₱ ',
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SectionLabel(
-                  'Notes (optional)',
-                  padding: const EdgeInsets.only(bottom: 8, left: 4),
-                ),
-                TextField(
-                  controller: notes,
-                  minLines: 2,
-                  maxLines: 3,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Add any extra detail about this funding source',
-                    prefixIcon: Icon(
-                      Icons.notes_rounded,
-                      color: palette.accentCyan,
+                  TextField(
+                    controller: amt,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [
+                      CurrencyInputFormatter(
+                        onReject: () => setDialogState(() {
+                          amountError = true;
+                          amountErrorText = 'Please input only a number';
+                        }),
+                        onValid: () {
+                          if (amountError) {
+                            setDialogState(() => amountError = false);
+                          }
+                        },
+                      ),
+                    ],
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: _dialogDecoration(
+                      dialogContext,
+                      hasError: amountError,
+                      hintText: '0.00',
+                      prefixText: '₱ ',
                     ),
                   ),
-                ),
-              ],
+                  if (amountError) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      amountErrorText,
+                      style: TextStyle(
+                        color: palette.danger,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  SectionLabel(
+                    'Notes (optional)',
+                    padding: const EdgeInsets.only(bottom: 8, left: 4),
+                  ),
+                  TextField(
+                    controller: notes,
+                    minLines: 2,
+                    maxLines: 3,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: InputDecoration(
+                      hintText:
+                          'Add any extra detail about this funding source',
+                      prefixIcon: Icon(
+                        Icons.notes_rounded,
+                        color: palette.accentCyan,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const SectionLabel(
+                    'Proof of Source',
+                    padding: EdgeInsets.only(bottom: 8, left: 4),
+                  ),
+                  PhotoUploadField(
+                    photoPath: photoPath,
+                    label: 'proof of source',
+                    hasError: photoError,
+                    onTap: () async {
+                      final path = await pickAndStorePhoto(dialogContext);
+                      if (path != null) {
+                        setDialogState(() {
+                          photoPath = path;
+                          photoError = false;
+                        });
+                      }
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final amount = double.tryParse(amt.text) ?? 0;
-                if (amount <= 0 || desc.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Enter a description and a valid amount'),
-                    ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final amount = parseCurrencyInput(amt.text);
+                  final descEmpty = desc.text.trim().isEmpty;
+                  final descInvalid = descEmpty || !isValidTextEntry(desc.text);
+                  final amountInvalid = amount <= 0;
+                  final photoInvalid = photoPath == null || photoPath!.isEmpty;
+
+                  if (descInvalid || amountInvalid || photoInvalid) {
+                    setDialogState(() {
+                      descError = descInvalid;
+                      if (descInvalid) {
+                        descErrorText = descEmpty
+                            ? 'Enter a funding source'
+                            : 'Enter a valid funding source';
+                      }
+                      amountError = amountInvalid;
+                      if (amountInvalid) {
+                        amountErrorText = 'Enter a valid amount';
+                      }
+                      photoError = photoInvalid;
+                    });
+                    return;
+                  }
+
+                  _addFunds(
+                    desc.text.trim(),
+                    amount,
+                    notes: notes.text,
+                    photoPath: photoPath!,
                   );
-                  return;
-                }
-                _addFunds(desc.text.trim(), amount, notes: notes.text);
-                Navigator.pop(dialogContext);
-              },
-              child: const Text('Add'),
-            ),
-          ],
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('Add'),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  void _showFundingHistory(BuildContext context) {
+  void _showAllHistory(BuildContext context) {
     final palette = context.colors;
-    final logs = _history.where((h) => h['type'] == 'INCOME').toList();
+    final logs = List<Map<String, dynamic>>.from(_history);
 
     showModalBottomSheet(
       context: context,
@@ -641,9 +789,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         palette,
         Builder(
           builder: (context) => DraggableScrollableSheet(
-            initialChildSize: 0.6,
+            initialChildSize: 0.7,
             minChildSize: 0.3,
-            maxChildSize: 0.9,
+            maxChildSize: 0.95,
             expand: false,
             builder: (context, scrollController) => Container(
               decoration: BoxDecoration(
@@ -683,7 +831,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            'Funding Sources',
+                            'Total Funds History',
                             style: AppText.title(context),
                           ),
                         ),
@@ -695,7 +843,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: logs.isEmpty
                         ? Center(
                             child: Text(
-                              'No funds added yet',
+                              'No history yet',
                               style: AppText.bodyMuted(context),
                             ),
                           )
@@ -707,60 +855,89 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 const SizedBox(height: 10),
                             itemBuilder: (context, i) {
                               final log = logs[i];
+                              final isExpense = log['type'] == 'EXPENSE';
                               final noteText = log['notes'] as String?;
-                              return AppCard(
-                                color: palette.bgSurfaceAlt,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 14,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                log['desc'] as String,
-                                                style: AppText.body(context)
-                                                    .copyWith(
-                                                      fontWeight:
-                                                          FontWeight.w700,
-                                                    ),
+                              final photoPath = log['photoPath'] as String?;
+                              final category = log['category'] as String?;
+
+                              return InkWell(
+                                borderRadius: BorderRadius.circular(16),
+                                onTap: () => _showHistoryDetail(context, log),
+                                child: AppCard(
+                                  color: palette.bgSurfaceAlt,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 14,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          if (photoPath != null &&
+                                              photoPath.isNotEmpty) ...[
+                                            ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              child: Image.file(
+                                                File(photoPath),
+                                                width: 40,
+                                                height: 40,
+                                                fit: BoxFit.cover,
                                               ),
-                                              const SizedBox(height: 3),
-                                              Text(
-                                                formatDateTime(
-                                                  log['time'] as DateTime,
+                                            ),
+                                            const SizedBox(width: 12),
+                                          ],
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  log['desc'] as String,
+                                                  style: AppText.body(context)
+                                                      .copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
                                                 ),
-                                                style: AppText.bodyMuted(
-                                                  context,
+                                                const SizedBox(height: 3),
+                                                Text(
+                                                  isExpense && category != null
+                                                      ? '$category · ${formatDateTime(log['time'] as DateTime)}'
+                                                      : formatDateTime(
+                                                          log['time']
+                                                              as DateTime,
+                                                        ),
+                                                  style: AppText.bodyMuted(
+                                                    context,
+                                                  ),
                                                 ),
-                                              ),
-                                            ],
+                                              ],
+                                            ),
                                           ),
-                                        ),
+                                          Text(
+                                            '${isExpense ? '-' : '+'}${formatCurrency(log['amount'] as double)}',
+                                            style: AppText.numeric(context)
+                                                .copyWith(
+                                                  color: isExpense
+                                                      ? palette.danger
+                                                      : palette.success,
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                      if (noteText != null &&
+                                          noteText.isNotEmpty) ...[
+                                        const SizedBox(height: 8),
                                         Text(
-                                          '+${formatCurrency(log['amount'] as double)}',
-                                          style: AppText.numeric(
-                                            context,
-                                          ).copyWith(color: palette.success),
+                                          noteText,
+                                          style: AppText.bodyMuted(context),
                                         ),
                                       ],
-                                    ),
-                                    if (noteText != null &&
-                                        noteText.isNotEmpty) ...[
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        noteText,
-                                        style: AppText.bodyMuted(context),
-                                      ),
                                     ],
-                                  ],
+                                  ),
                                 ),
                               );
                             },
@@ -813,11 +990,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _showCategoryHistory(BuildContext context, String category) {
+  void _showHistoryDetail(BuildContext context, Map<String, dynamic> log) {
     final palette = context.colors;
-    final logs = _history.where((h) => h['category'] == category).toList();
-    final index = _allocations.keys.toList().indexOf(category);
-    final color = categoryColor(context, index);
+    final photoPath = log['photoPath'] as String?;
+    final isExpense = log['type'] == 'EXPENSE';
+    final amount = log['amount'] as double;
+    final time = log['time'] as DateTime;
+    final desc = log['desc'] as String;
+    final notes = log['notes'] as String?;
+    final category = log['category'] as String?;
+
+    final double balanceAfter;
+    if (isExpense) {
+      if (category != null) {
+        balanceAfter = (_allocations[category]?['remaining'] as double?) ?? 0.0;
+      } else {
+        balanceAfter = 0.0;
+      }
+    } else {
+      balanceAfter = totalFunds;
+    }
 
     showModalBottomSheet(
       context: context,
@@ -827,9 +1019,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         palette,
         Builder(
           builder: (context) => DraggableScrollableSheet(
-            initialChildSize: 0.6,
-            minChildSize: 0.3,
-            maxChildSize: 0.9,
+            initialChildSize: 0.75,
+            minChildSize: 0.4,
+            maxChildSize: 0.95,
             expand: false,
             builder: (context, scrollController) => Container(
               decoration: BoxDecoration(
@@ -849,91 +1041,115 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       borderRadius: BorderRadius.circular(4),
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: color.withOpacity(0.14),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(
-                            categoryIcon(category),
-                            color: color,
-                            size: 18,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(category, style: AppText.title(context)),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Divider(height: 1, color: palette.divider),
                   Expanded(
-                    child: logs.isEmpty
-                        ? Center(
-                            child: Text(
-                              'No expenses logged yet',
-                              style: AppText.bodyMuted(context),
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+                      children: [
+                        Text(desc, style: AppText.title(context)),
+                        const SizedBox(height: 4),
+                        Text(
+                          formatDateTime(time),
+                          style: AppText.bodyMuted(context),
+                        ),
+                        const SizedBox(height: 18),
+                        if (photoPath != null && photoPath.isNotEmpty)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: Image.file(
+                              File(photoPath),
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: 240,
                             ),
                           )
-                        : ListView.separated(
-                            controller: scrollController,
-                            padding: const EdgeInsets.all(16),
-                            itemCount: logs.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 10),
-                            itemBuilder: (context, i) {
-                              final log = logs[i];
-                              return AppCard(
-                                color: palette.bgSurfaceAlt,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 14,
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            log['desc'] as String,
-                                            style: AppText.body(context),
-                                          ),
-                                          const SizedBox(height: 3),
-                                          Text(
-                                            formatDateTime(
-                                              log['time'] as DateTime,
-                                            ),
-                                            style: AppText.bodyMuted(context),
-                                          ),
-                                        ],
+                        else
+                          Container(
+                            height: 160,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: palette.bgSurfaceAlt,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              'No photo attached',
+                              style: AppText.bodyMuted(context),
+                            ),
+                          ),
+                        const SizedBox(height: 20),
+                        _detailRow(
+                          context,
+                          isExpense ? 'Category' : 'Source',
+                          category ?? desc,
+                        ),
+                        _detailRow(
+                          context,
+                          'Amount',
+                          '${isExpense ? '-' : '+'}${formatCurrency(amount)}',
+                        ),
+                        _detailRow(
+                          context,
+                          isExpense ? 'Category Balance' : 'Total Funds',
+                          formatCurrency(balanceAfter),
+                        ),
+                        if (notes != null && notes.trim().isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          _detailRow(context, 'Notes', notes),
+                        ],
+                        const SizedBox(height: 28),
+                        if (photoPath != null && photoPath.isNotEmpty)
+                          GradientButton(
+                            label: 'Convert to PDF',
+                            onPressed: () async {
+                              try {
+                                await HistoryPdfExport.exportEntry(
+                                  entry: log,
+                                  balanceAfter: balanceAfter,
+                                );
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Could not generate PDF: $e',
                                       ),
                                     ),
-                                    Text(
-                                      '-${formatCurrency(log['amount'] as double)}',
-                                      style: AppText.numeric(
-                                        context,
-                                      ).copyWith(color: palette.danger),
-                                    ),
-                                  ],
-                                ),
-                              );
+                                  );
+                                }
+                              }
                             },
                           ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _detailRow(BuildContext context, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: AppText.bodyMuted(context)),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: AppText.body(
+                context,
+              ).copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
       ),
     );
   }

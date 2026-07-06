@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../widgets/photo_upload_field.dart';
+import '../widgets/currency_input_formatter.dart';
 
 class AuditFormScreen extends StatefulWidget {
   final Map<String, Map<String, dynamic>> allocations;
-  final Function(String, String, double) onSave;
+  final Function(
+    String category,
+    String product,
+    double amount,
+    String photoPath,
+  )
+  onSave;
 
   const AuditFormScreen({
     super.key,
@@ -17,8 +25,16 @@ class AuditFormScreen extends StatefulWidget {
 
 class _AuditFormScreenState extends State<AuditFormScreen> {
   String? _category;
+  String? _photoPath;
   final _product = TextEditingController();
   final _amount = TextEditingController();
+
+  bool _categoryError = false;
+  bool _productError = false;
+  String _productErrorText = 'Enter a product name';
+  bool _amountError = false;
+  String _amountErrorText = 'Enter a valid amount';
+  bool _photoError = false;
 
   @override
   void dispose() {
@@ -27,29 +43,85 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
     super.dispose();
   }
 
+  Future<void> _pickPhoto() async {
+    final path = await pickAndStorePhoto(context);
+    if (path != null) {
+      setState(() {
+        _photoPath = path;
+        _photoError = false;
+      });
+    }
+  }
+
+  InputDecoration _decoration({
+    required bool hasError,
+    String? hintText,
+    Widget? prefixIcon,
+    String? prefixText,
+  }) {
+    final palette = context.colors;
+    final borderColor = hasError ? palette.danger : palette.divider;
+    final focusColor = hasError ? palette.danger : palette.primary;
+    final prefixColor = Theme.of(context).brightness == Brightness.dark
+        ? palette.textPrimary
+        : palette.primary;
+    return InputDecoration(
+      hintText: hintText,
+      prefixIcon: prefixIcon,
+      prefix: prefixText == null
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Text(
+                prefixText,
+                style: TextStyle(
+                  color: prefixColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                  height: 1,
+                ),
+              ),
+            ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: borderColor, width: hasError ? 1.8 : 1.2),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: focusColor, width: 1.8),
+      ),
+    );
+  }
+
   void _submit() {
-    if (_category == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Select a category first')));
-      return;
-    }
-    if (_product.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a product or expense name')),
-      );
+    final category = _category;
+    final product = _product.text.trim();
+    final amt = parseCurrencyInput(_amount.text);
+
+    final categoryInvalid =
+        category == null || !isValidTextEntry(category, minLength: 1);
+    final productEmpty = product.isEmpty;
+    final productInvalid = productEmpty || !isValidTextEntry(product);
+    final amountInvalid = amt <= 0;
+    final photoInvalid = _photoPath == null || _photoPath!.isEmpty;
+
+    if (categoryInvalid || productInvalid || amountInvalid || photoInvalid) {
+      setState(() {
+        _categoryError = categoryInvalid;
+        _productError = productInvalid;
+        if (productInvalid) {
+          _productErrorText = productEmpty
+              ? 'Enter a product name'
+              : 'Enter a valid product name';
+        }
+        _amountError = amountInvalid;
+        if (amountInvalid) _amountErrorText = 'Enter a valid amount';
+        _photoError = photoInvalid;
+      });
       return;
     }
 
-    double amt = double.tryParse(_amount.text) ?? 0;
-    double remaining = widget.allocations[_category!]!['remaining'];
-
-    if (amt <= 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Enter a valid amount')));
-      return;
-    }
+    final remaining = widget.allocations[category]!['remaining'] as double;
 
     if (amt > remaining) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -81,7 +153,7 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  widget.onSave(_category!, _product.text.trim(), amt);
+                  widget.onSave(category, product, amt, _photoPath!);
                   Navigator.pop(dialogContext);
                   Navigator.pop(context);
                 },
@@ -92,7 +164,7 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
         ),
       );
     } else {
-      widget.onSave(_category!, _product.text.trim(), amt);
+      widget.onSave(category, product, amt, _photoPath!);
       Navigator.pop(context);
     }
   }
@@ -152,8 +224,12 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
                           ),
                         )
                         .toList(),
-                    onChanged: (v) => setState(() => _category = v),
-                    decoration: const InputDecoration(
+                    onChanged: (v) => setState(() {
+                      _category = v;
+                      _categoryError = false;
+                    }),
+                    decoration: _decoration(
+                      hasError: _categoryError,
                       hintText: 'Choose a folder',
                     ),
                   ),
@@ -192,27 +268,77 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
                   const SectionLabel('Product Name'),
                   TextField(
                     controller: _product,
+                    onChanged: (_) {
+                      if (_productError) setState(() => _productError = false);
+                    },
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontWeight: FontWeight.w500,
                     ),
-                    decoration: const InputDecoration(
+                    decoration: _decoration(
+                      hasError: _productError,
                       hintText: 'What did you buy?',
                     ),
                   ),
+                  if (_productError) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _productErrorText,
+                      style: TextStyle(
+                        color: palette.danger,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   const SectionLabel('Amount'),
                   TextField(
                     controller: _amount,
-                    keyboardType: TextInputType.number,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [
+                      CurrencyInputFormatter(
+                        onReject: () => setState(() {
+                          _amountError = true;
+                          _amountErrorText = 'Please input only a number';
+                        }),
+                        onValid: () {
+                          if (_amountError) {
+                            setState(() => _amountError = false);
+                          }
+                        },
+                      ),
+                    ],
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontWeight: FontWeight.w500,
                     ),
-                    decoration: const InputDecoration(
+                    decoration: _decoration(
+                      hasError: _amountError,
                       hintText: '0.00',
                       prefixText: '₱ ',
                     ),
+                  ),
+                  if (_amountError) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _amountErrorText,
+                      style: TextStyle(
+                        color: palette.danger,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  const SectionLabel('Proof of Purchase'),
+                  PhotoUploadField(
+                    photoPath: _photoPath,
+                    onTap: _pickPhoto,
+                    label: 'proof of purchase',
+                    hasError: _photoError,
                   ),
                   const SizedBox(height: 36),
                   GradientButton(label: 'Save Expense', onPressed: _submit),
