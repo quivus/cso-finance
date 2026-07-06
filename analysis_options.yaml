@@ -9,8 +9,10 @@
 # packages, and plugins designed to encourage good coding practices.
 analyzer:
   errors:
+    curly_braces_in_flow_control_structures: ignore
     depend_on_referenced_packages: ignore
     deprecated_member_use: ignore
+    unnecessary_import: ignore
     unnecessary_underscores: ignore
     unused_element: ignore
     unused_import: ignore
