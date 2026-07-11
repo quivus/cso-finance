@@ -286,11 +286,9 @@ class _PrintedViewScreenState extends State<PrintedViewScreen> {
 
   Widget _historyEntry(Map<String, dynamic> log) {
     final isExpense = log['type'] == 'EXPENSE';
-    final time = log['time'] as DateTime;
     final desc = log['desc'] as String;
     final amount = log['amount'] as double;
     final notes = log['notes'] as String?;
-    final photoPath = log['photoPath'] as String?;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -300,23 +298,6 @@ class _PrintedViewScreenState extends State<PrintedViewScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                _formatTime(time),
-                style: const TextStyle(fontSize: 11.5, color: Colors.black54),
-              ),
-              const SizedBox(width: 10),
-              if (photoPath != null && photoPath.isNotEmpty) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Image.file(
-                    File(photoPath),
-                    width: 36,
-                    height: 36,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                const SizedBox(width: 10),
-              ],
               Expanded(
                 child: Text(
                   desc,
@@ -332,16 +313,14 @@ class _PrintedViewScreenState extends State<PrintedViewScreen> {
                 style: TextStyle(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w700,
-                  color: isExpense
-                      ? const Color(0xFFD8453F)
-                      : const Color(0xFF1F9D57),
+                  color: isExpense ? const Color(0xFFD8453F) : Colors.black,
                 ),
               ),
             ],
           ),
           if (notes != null && notes.trim().isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 4, left: 46),
+              padding: const EdgeInsets.only(top: 4),
               child: Text(
                 'Notes: $notes',
                 style: const TextStyle(fontSize: 11.5, color: Colors.black54),
@@ -402,11 +381,4 @@ String _formatFullDate(DateTime dt) {
   ];
   final day = dt.day.toString().padLeft(2, '0');
   return '${months[dt.month - 1]} $day, ${dt.year}';
-}
-
-String _formatTime(DateTime dt) {
-  final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-  final minute = dt.minute.toString().padLeft(2, '0');
-  final period = dt.hour >= 12 ? 'PM' : 'AM';
-  return '$hour12:$minute $period';
 }

@@ -60,22 +60,32 @@ Future<String?> pickAndStorePhoto(BuildContext context) async {
 
   if (source == null) return null;
 
-  final picker = ImagePicker();
-  final picked = await picker.pickImage(source: source, imageQuality: 80);
-  if (picked == null) return null;
+  try {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: source, imageQuality: 80);
+    if (picked == null) return null;
 
-  final docsDir = await getApplicationDocumentsDirectory();
-  final proofDir = Directory(p.join(docsDir.path, 'proof_photos'));
-  if (!await proofDir.exists()) {
-    await proofDir.create(recursive: true);
+    final docsDir = await getApplicationDocumentsDirectory();
+    final proofDir = Directory(p.join(docsDir.path, 'proof_photos'));
+    if (!await proofDir.exists()) {
+      await proofDir.create(recursive: true);
+    }
+
+    final fileName =
+        'proof_${DateTime.now().millisecondsSinceEpoch}${p.extension(picked.path)}';
+    final savedPath = p.join(proofDir.path, fileName);
+    await File(picked.path).copy(savedPath);
+
+    return savedPath;
+  } catch (e) {
+    debugPrint('pickAndStorePhoto failed: $e');
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not get photo: $e')));
+    }
+    return null;
   }
-
-  final fileName =
-      'proof_${DateTime.now().millisecondsSinceEpoch}${p.extension(picked.path)}';
-  final savedPath = p.join(proofDir.path, fileName);
-  await File(picked.path).copy(savedPath);
-
-  return savedPath;
 }
 
 class PhotoUploadField extends StatelessWidget {

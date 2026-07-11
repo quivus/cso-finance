@@ -5,7 +5,7 @@ import '../widgets/currency_input_formatter.dart';
 
 class AuditFormScreen extends StatefulWidget {
   final Map<String, Map<String, dynamic>> allocations;
-  final Function(
+  final Future<void> Function(
     String category,
     String product,
     double amount,
@@ -35,6 +35,7 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
   bool _amountError = false;
   String _amountErrorText = 'Enter a valid amount';
   bool _photoError = false;
+  bool _isSaving = false;
 
   @override
   void dispose() {
@@ -93,7 +94,8 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
     );
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_isSaving) return;
     final category = _category;
     final product = _product.text.trim();
     final amt = parseCurrencyInput(_amount.text);
@@ -152,10 +154,9 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
                 child: const Text('Discard'),
               ),
               ElevatedButton(
-                onPressed: () {
-                  widget.onSave(category, product, amt, _photoPath!);
+                onPressed: () async {
                   Navigator.pop(dialogContext);
-                  Navigator.pop(context);
+                  await _performSave(category, product, amt, _photoPath!);
                 },
                 child: const Text('Confirm'),
               ),
@@ -164,8 +165,27 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
         ),
       );
     } else {
-      widget.onSave(category, product, amt, _photoPath!);
+      await _performSave(category, product, amt, _photoPath!);
+    }
+  }
+
+  Future<void> _performSave(
+    String category,
+    String product,
+    double amount,
+    String photoPath,
+  ) async {
+    setState(() => _isSaving = true);
+    try {
+      await widget.onSave(category, product, amount, photoPath);
+      if (!mounted) return;
       Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not save expense: $e')));
     }
   }
 
@@ -341,7 +361,10 @@ class _AuditFormScreenState extends State<AuditFormScreen> {
                     hasError: _photoError,
                   ),
                   const SizedBox(height: 36),
-                  GradientButton(label: 'Save Expense', onPressed: _submit),
+                  GradientButton(
+                    label: _isSaving ? 'Saving…' : 'Save Expense',
+                    onPressed: _isSaving ? null : _submit,
+                  ),
                 ],
               ),
             ),

@@ -1,10 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../auditing/audit_form.dart';
 import '../services/finance_store.dart';
-import '../services/history_pdf_export.dart';
 import '../widgets/photo_upload_field.dart';
 import '../widgets/currency_input_formatter.dart';
 import 'login.dart';
@@ -26,100 +26,84 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   late Map<String, Map<String, dynamic>> _allocations;
 
+  StreamSubscription<Map<String, dynamic>>? _summarySub;
+  StreamSubscription<List<Map<String, dynamic>>>? _historySub;
+
   @override
   void initState() {
     super.initState();
     _initializeAllocations();
-    _loadPersistedData();
+    _initFirestoreSync();
+  }
+
+  @override
+  void dispose() {
+    _summarySub?.cancel();
+    _historySub?.cancel();
+    super.dispose();
   }
 
   void _initializeAllocations() {
-    _allocations = {
-      'Event Operations & Materials': {'pct': 0.30, 'remaining': 0.0},
-      'Promotional Material': {'pct': 0.10, 'remaining': 0.0},
-      'Guest Tokens & Recognition': {'pct': 0.10, 'remaining': 0.0},
-      'Organizational Supplies': {'pct': 0.10, 'remaining': 0.0},
-      'Emergency & Contingency Fund': {'pct': 0.10, 'remaining': 0.0},
-      'Training & Officer Development': {'pct': 0.15, 'remaining': 0.0},
-      'Documentation': {'pct': 0.05, 'remaining': 0.0},
-      'Savings & Future Projects': {'pct': 0.10, 'remaining': 0.0},
-    };
-  }
-
-  Future<void> _loadPersistedData() async {
-    final data = await FinanceStore.load();
-    if (!mounted) return;
-
-    setState(() {
-      totalFunds = data['totalFunds'] as double;
-
-      final remaining = data['remaining'] as Map<String, double>?;
-      if (remaining != null) {
-        remaining.forEach((key, value) {
-          if (_allocations.containsKey(key)) {
-            _allocations[key]!['remaining'] = value;
-          }
-        });
-      }
-
-      _history
-        ..clear()
-        ..addAll(data['history'] as List<Map<String, dynamic>>);
-
-      _isLoading = false;
-    });
-  }
-
-  Future<void> _persist() {
-    return FinanceStore.save(
-      totalFunds: totalFunds,
-      allocations: _allocations,
-      history: _history,
+    _allocations = FinanceStore.defaultCategoryPercentages.map(
+      (key, pct) => MapEntry(key, {'pct': pct, 'remaining': 0.0}),
     );
   }
 
-  void _addFunds(
+  Future<void> _initFirestoreSync() async {
+    await FinanceStore.ensureInitialized();
+    if (!mounted) return;
+
+    _summarySub = FinanceStore.watchSummary().listen((data) {
+      if (!mounted) return;
+      setState(() {
+        totalFunds = data['totalFunds'] as double;
+        final allocations =
+            data['allocations'] as Map<String, Map<String, dynamic>>;
+        allocations.forEach((key, value) {
+          if (_allocations.containsKey(key)) {
+            _allocations[key]!['remaining'] = value['remaining'];
+          }
+        });
+        _isLoading = false;
+      });
+    });
+
+    _historySub = FinanceStore.watchHistory().listen((history) {
+      if (!mounted) return;
+      setState(() {
+        _history
+          ..clear()
+          ..addAll(history);
+      });
+    });
+  }
+
+  Future<void> _addFunds(
     String source,
     double amount, {
     String? notes,
     required String photoPath,
-  }) {
-    setState(() {
-      totalFunds += amount;
-      _history.insert(0, {
-        'type': 'INCOME',
-        'desc': source,
-        'amount': amount,
-        'time': DateTime.now(),
-        'photoPath': photoPath,
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-      });
-      _allocations.forEach((key, val) {
-        val['remaining'] += (amount * val['pct']);
-      });
-    });
-    _persist();
+  }) async {
+    await FinanceStore.addFunds(
+      source: source,
+      amount: amount,
+      notes: notes,
+      photoPath: photoPath,
+    );
   }
 
-  void _addExpense(
+  Future<void> _addExpense(
     String category,
     String product,
     double amount,
     String photoPath,
-  ) {
-    setState(() {
-      _allocations[category]!['remaining'] -= amount;
-      totalFunds -= amount;
-      _history.insert(0, {
-        'type': 'EXPENSE',
-        'category': category,
-        'desc': product,
-        'amount': amount,
-        'time': DateTime.now(),
-        'photoPath': photoPath,
-      });
-    });
-    _persist();
+  ) async {
+    await FinanceStore.addExpense(
+      category: category,
+      product: product,
+      amount: amount,
+      photoPath: photoPath,
+    );
   }
 
   double _spentFor(String category) {
@@ -281,7 +265,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _drawerTile(
                     context: context,
                     icon: Icons.delete_outline_rounded,
-                    label: 'Reset Local Data',
+                    label: 'Reset Shared Data',
                     danger: true,
                     onTap: () => _confirmResetData(context),
                   ),
@@ -446,11 +430,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'TOTAL FUNDS',
-                style: AppText.caption(
-                  context,
-                ).copyWith(color: palette.accentCyan),
+              Row(
+                children: [
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: palette.accentCyan.withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(
+                      Icons.account_balance_wallet_rounded,
+                      color: palette.accentCyan,
+                      size: 15,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'TOTAL FUNDS',
+                    style: AppText.caption(
+                      context,
+                    ).copyWith(color: palette.accentCyan, letterSpacing: 0.6),
+                  ),
+                ],
               ),
               Row(
                 children: [
@@ -472,12 +474,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          Text(
-            formatCurrency(totalFunds),
-            style: AppText.numericLarge(
-              context,
-            ).copyWith(color: palette.success),
+          const SizedBox(height: 22),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              formatCurrency(totalFunds),
+              style: AppText.numericLarge(
+                context,
+              ).copyWith(color: palette.success, fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text('Available balance', style: AppText.bodyMuted(context)),
           ),
         ],
       ),
@@ -594,6 +604,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     bool amountError = false;
     String amountErrorText = 'Enter a valid amount';
     bool photoError = false;
+    bool isSubmitting = false;
 
     showDialog(
       context: context,
@@ -732,43 +743,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
+                onPressed: isSubmitting
+                    ? null
+                    : () => Navigator.pop(dialogContext),
                 child: const Text('Cancel'),
               ),
               ElevatedButton(
-                onPressed: () {
-                  final amount = parseCurrencyInput(amt.text);
-                  final descEmpty = desc.text.trim().isEmpty;
-                  final descInvalid = descEmpty || !isValidTextEntry(desc.text);
-                  final amountInvalid = amount <= 0;
-                  final photoInvalid = photoPath == null || photoPath!.isEmpty;
+                onPressed: isSubmitting
+                    ? null
+                    : () async {
+                        final amount = parseCurrencyInput(amt.text);
+                        final descEmpty = desc.text.trim().isEmpty;
+                        final descInvalid =
+                            descEmpty || !isValidTextEntry(desc.text);
+                        final amountInvalid = amount <= 0;
+                        final photoInvalid =
+                            photoPath == null || photoPath!.isEmpty;
 
-                  if (descInvalid || amountInvalid || photoInvalid) {
-                    setDialogState(() {
-                      descError = descInvalid;
-                      if (descInvalid) {
-                        descErrorText = descEmpty
-                            ? 'Enter a funding source'
-                            : 'Enter a valid funding source';
-                      }
-                      amountError = amountInvalid;
-                      if (amountInvalid) {
-                        amountErrorText = 'Enter a valid amount';
-                      }
-                      photoError = photoInvalid;
-                    });
-                    return;
-                  }
+                        if (descInvalid || amountInvalid || photoInvalid) {
+                          setDialogState(() {
+                            descError = descInvalid;
+                            if (descInvalid) {
+                              descErrorText = descEmpty
+                                  ? 'Enter a funding source'
+                                  : 'Enter a valid funding source';
+                            }
+                            amountError = amountInvalid;
+                            if (amountInvalid) {
+                              amountErrorText = 'Enter a valid amount';
+                            }
+                            photoError = photoInvalid;
+                          });
+                          return;
+                        }
 
-                  _addFunds(
-                    desc.text.trim(),
-                    amount,
-                    notes: notes.text,
-                    photoPath: photoPath!,
-                  );
-                  Navigator.pop(dialogContext);
-                },
-                child: const Text('Add'),
+                        setDialogState(() => isSubmitting = true);
+                        try {
+                          await _addFunds(
+                            desc.text.trim(),
+                            amount,
+                            notes: notes.text,
+                            photoPath: photoPath!,
+                          );
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext);
+                        } catch (e) {
+                          setDialogState(() => isSubmitting = false);
+                          if (!dialogContext.mounted) return;
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            SnackBar(content: Text('Could not save: $e')),
+                          );
+                        }
+                      },
+                child: isSubmitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Add'),
               ),
             ],
           ),
@@ -860,24 +893,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               final photoPath = log['photoPath'] as String?;
                               final category = log['category'] as String?;
 
-                              return InkWell(
-                                borderRadius: BorderRadius.circular(16),
-                                onTap: () => _showHistoryDetail(context, log),
-                                child: AppCard(
-                                  color: palette.bgSurfaceAlt,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 14,
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          if (photoPath != null &&
-                                              photoPath.isNotEmpty) ...[
-                                            ClipRRect(
+                              return AppCard(
+                                color: palette.bgSurfaceAlt,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        if (photoPath != null &&
+                                            photoPath.isNotEmpty) ...[
+                                          GestureDetector(
+                                            onTap: () =>
+                                                _viewPhoto(context, photoPath),
+                                            child: ClipRRect(
                                               borderRadius:
                                                   BorderRadius.circular(8),
                                               child: Image.file(
@@ -885,65 +917,118 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                                 width: 40,
                                                 height: 40,
                                                 fit: BoxFit.cover,
+                                                errorBuilder:
+                                                    (
+                                                      context,
+                                                      error,
+                                                      stack,
+                                                    ) => const SizedBox(
+                                                      width: 40,
+                                                      height: 40,
+                                                      child: Icon(
+                                                        Icons
+                                                            .broken_image_rounded,
+                                                        size: 18,
+                                                      ),
+                                                    ),
                                               ),
                                             ),
-                                            const SizedBox(width: 12),
-                                          ],
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  log['desc'] as String,
-                                                  style: AppText.body(context)
-                                                      .copyWith(
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                      ),
-                                                ),
-                                                const SizedBox(height: 3),
-                                                Text(
-                                                  isExpense && category != null
-                                                      ? '$category · ${formatDateTime(log['time'] as DateTime)}'
-                                                      : formatDateTime(
-                                                          log['time']
-                                                              as DateTime,
-                                                        ),
-                                                  style: AppText.bodyMuted(
-                                                    context,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
                                           ),
-                                          Text(
-                                            '${isExpense ? '-' : '+'}${formatCurrency(log['amount'] as double)}',
-                                            style: AppText.numeric(context)
-                                                .copyWith(
-                                                  color: isExpense
-                                                      ? palette.danger
-                                                      : palette.success,
-                                                ),
-                                          ),
+                                          const SizedBox(width: 12),
                                         ],
-                                      ),
-                                      if (noteText != null &&
-                                          noteText.isNotEmpty) ...[
-                                        const SizedBox(height: 8),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                log['desc'] as String,
+                                                style: AppText.body(context)
+                                                    .copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                isExpense && category != null
+                                                    ? '$category · ${formatDateTime(log['time'] as DateTime)}'
+                                                    : formatDateTime(
+                                                        log['time'] as DateTime,
+                                                      ),
+                                                style: AppText.bodyMuted(
+                                                  context,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
                                         Text(
-                                          noteText,
-                                          style: AppText.bodyMuted(context),
+                                          '${isExpense ? '-' : '+'}${formatCurrency(log['amount'] as double)}',
+                                          style: AppText.numeric(context)
+                                              .copyWith(
+                                                color: isExpense
+                                                    ? palette.danger
+                                                    : palette.success,
+                                              ),
                                         ),
                                       ],
+                                    ),
+                                    if (noteText != null &&
+                                        noteText.isNotEmpty) ...[
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        noteText,
+                                        style: AppText.bodyMuted(context),
+                                      ),
                                     ],
-                                  ),
+                                  ],
                                 ),
                               );
                             },
                           ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _viewPhoto(BuildContext context, String photoPath) {
+    final palette = context.colors;
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (context, animation, secondaryAnimation) => appThemeScope(
+          palette,
+          GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Scaffold(
+              backgroundColor: Colors.black,
+              body: SafeArea(
+                child: Stack(
+                  children: [
+                    Center(
+                      child: InteractiveViewer(
+                        minScale: 1,
+                        maxScale: 4,
+                        child: Image.file(File(photoPath)),
+                      ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -960,10 +1045,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (dialogContext) => appThemeScope(
         palette,
         AlertDialog(
-          title: const Text('Reset Local Data'),
+          title: const Text('Reset Shared Data'),
           content: const Text(
             'This will permanently delete all funds, allocations, and '
-            'history saved on this device. This cannot be undone.',
+            'history for every officer — this data is now shared in the '
+            'cloud. This cannot be undone.',
           ),
           actions: [
             TextButton(
@@ -973,183 +1059,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: palette.danger),
               onPressed: () async {
-                await FinanceStore.clearAll();
+                await FinanceStore.resetAll();
                 if (!mounted) return;
-                setState(() {
-                  totalFunds = 0.0;
-                  _history.clear();
-                  _initializeAllocations();
-                });
                 Navigator.pop(dialogContext);
               },
               child: const Text('Delete'),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showHistoryDetail(BuildContext context, Map<String, dynamic> log) {
-    final palette = context.colors;
-    final photoPath = log['photoPath'] as String?;
-    final isExpense = log['type'] == 'EXPENSE';
-    final amount = log['amount'] as double;
-    final time = log['time'] as DateTime;
-    final desc = log['desc'] as String;
-    final notes = log['notes'] as String?;
-    final category = log['category'] as String?;
-
-    final double balanceAfter;
-    if (isExpense) {
-      if (category != null) {
-        balanceAfter = (_allocations[category]?['remaining'] as double?) ?? 0.0;
-      } else {
-        balanceAfter = 0.0;
-      }
-    } else {
-      balanceAfter = totalFunds;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (sheetContext) => appThemeScope(
-        palette,
-        Builder(
-          builder: (context) => DraggableScrollableSheet(
-            initialChildSize: 0.75,
-            minChildSize: 0.4,
-            maxChildSize: 0.95,
-            expand: false,
-            builder: (context, scrollController) => Container(
-              decoration: BoxDecoration(
-                color: palette.bgSurface,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(28),
-                ),
-              ),
-              child: Column(
-                children: [
-                  const SizedBox(height: 12),
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: palette.divider,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView(
-                      controller: scrollController,
-                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-                      children: [
-                        Text(desc, style: AppText.title(context)),
-                        const SizedBox(height: 4),
-                        Text(
-                          formatDateTime(time),
-                          style: AppText.bodyMuted(context),
-                        ),
-                        const SizedBox(height: 18),
-                        if (photoPath != null && photoPath.isNotEmpty)
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: Image.file(
-                              File(photoPath),
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              height: 240,
-                            ),
-                          )
-                        else
-                          Container(
-                            height: 160,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: palette.bgSurfaceAlt,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Text(
-                              'No photo attached',
-                              style: AppText.bodyMuted(context),
-                            ),
-                          ),
-                        const SizedBox(height: 20),
-                        _detailRow(
-                          context,
-                          isExpense ? 'Category' : 'Source',
-                          category ?? desc,
-                        ),
-                        _detailRow(
-                          context,
-                          'Amount',
-                          '${isExpense ? '-' : '+'}${formatCurrency(amount)}',
-                        ),
-                        _detailRow(
-                          context,
-                          isExpense ? 'Category Balance' : 'Total Funds',
-                          formatCurrency(balanceAfter),
-                        ),
-                        if (notes != null && notes.trim().isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          _detailRow(context, 'Notes', notes),
-                        ],
-                        const SizedBox(height: 28),
-                        if (photoPath != null && photoPath.isNotEmpty)
-                          GradientButton(
-                            label: 'Convert to PDF',
-                            onPressed: () async {
-                              try {
-                                await HistoryPdfExport.exportEntry(
-                                  entry: log,
-                                  balanceAfter: balanceAfter,
-                                );
-                              } catch (e) {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        'Could not generate PDF: $e',
-                                      ),
-                                    ),
-                                  );
-                                }
-                              }
-                            },
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _detailRow(BuildContext context, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: AppText.bodyMuted(context)),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: AppText.body(
-                context,
-              ).copyWith(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
       ),
     );
   }
